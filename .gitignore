@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+venv/
+.venv/
+env/
+ENV/
+
+.idea/
+.vscode/
+*.swp
+
+build/
+dist/
+*.spec
+
+*.csv
+*.log
+
+.DS_Store
+Thumbs.db
+
+# PyInstaller
+*.manifest
+_preview_*.png

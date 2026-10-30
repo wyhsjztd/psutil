@@ -17,7 +17,7 @@ import psutil
 
 from .engine import RateTracker
 from .models import PartitionInfo, ProcessInfo, Snapshot, UserInfo
-from .winperf import DiskActivity
+from .winperf import CpuUsage, DiskActivity
 
 PARTITION_CACHE_SECONDS = 30.0
 CONNECTIONS_EVERY_N_TICKS = 5
@@ -39,6 +39,8 @@ class Collector:
         # 不可用时退回 read_time/write_time 差值法
         self._disk_activity = DiskActivity()
         self._busy_prev: Optional[Tuple[float, float]] = None
+        # CPU 利用率：优先用性能计数器的 % Processor Utility（任务管理器口径）
+        self._cpu_usage = CpuUsage(psutil.cpu_count(logical=True) or 0)
         # CPU 基线刚重置时，避免用极短间隔再算一次得出垃圾值
         self._cpu_last_mono: Optional[float] = None
         self._cpu_last_value: Tuple[float, Tuple[float, ...], float] = (0.0, (), 0.0)
@@ -72,6 +74,7 @@ class Collector:
             tracker.reset()
         self._busy_prev = None
         self._disk_activity.rebase()
+        self._cpu_usage.rebase()
 
         try:
             psutil.cpu_percent(interval=None)
@@ -176,12 +179,18 @@ class Collector:
         if self._cpu_last_mono is not None and mono - self._cpu_last_mono < 0.2:
             return self._cpu_last_value
 
-        try:
-            percent = psutil.cpu_percent(interval=None)
-            per_core = tuple(psutil.cpu_percent(interval=None, percpu=True))
-        except Exception:
-            errors.append("CPU")
-            percent, per_core = 0.0, ()
+        # 优先：性能计数器 % Processor Utility，与任务管理器显示一致
+        usage = self._cpu_usage.read()
+        if usage is not None:
+            percent, per_core = usage
+        else:
+            # 回退：psutil 的 % Processor Time，在睿频/降频场景下会明显偏低
+            try:
+                percent = psutil.cpu_percent(interval=None)
+                per_core = tuple(psutil.cpu_percent(interval=None, percpu=True))
+            except Exception:
+                errors.append("CPU")
+                percent, per_core = 0.0, ()
 
         freq = 0.0
         try:

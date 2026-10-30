@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence
 
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -111,10 +111,109 @@ class Sparkline(QWidget):
         painter.drawPath(path)
 
 
-class NavCard(QFrame):
-    """左侧导航卡片：标题 + 当前值 + 迷你曲线。"""
+class _NavItemBase(QFrame):
+    """导航项基类：自绘背景，悬停渐变动画，右侧箭头提示可点击。
+
+    不用 QSS 的 :hover —— 卡片被 QLabel/Sparkline 子控件完全覆盖，
+    鼠标实际落在子控件上，父级的 :hover 不会触发，用户就看不出能点。
+    这里把子控件设为鼠标穿透，并用 enterEvent / leaveEvent 驱动一个 0→1 的
+    动画值，再在 paintEvent 里按该值画背景，得到平滑的悬停反馈。
+    """
 
     clicked = Signal(str)
+
+    def __init__(self, key: str, height: int, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.key = key
+        self.setObjectName("NavItem")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(height)
+        self.setAttribute(Qt.WA_Hover, True)
+
+        self._selected = False
+        self._hover = 0.0
+        self._hover_anim = QVariantAnimation(self)
+        self._hover_anim.setDuration(140)
+        self._hover_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._hover_anim.valueChanged.connect(self._on_hover_changed)
+
+    # ---------------------------------------------------------------- 视觉
+    def _on_hover_changed(self, value) -> None:
+        self._hover = float(value)
+        self._update_chevron()
+        self.update()
+
+    def _animate_hover(self, target: float) -> None:
+        self._hover_anim.stop()
+        self._hover_anim.setStartValue(self._hover)
+        self._hover_anim.setEndValue(target)
+        self._hover_anim.start()
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._animate_hover(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._animate_hover(0.0)
+        super().leaveEvent(event)
+
+    def set_selected(self, selected: bool) -> None:
+        self._selected = selected
+        self._update_chevron()
+        self.update()
+
+    def _update_chevron(self) -> None:
+        if not hasattr(self, "_chevron"):
+            return
+        if self._selected:
+            color = C.ACCENT
+        elif self._hover > 0.05:
+            color = C.TEXT
+        else:
+            color = C.TEXT_FAINT
+        if getattr(self, "_chevron_color", None) != color:
+            self._chevron.setStyleSheet(f"color:{color};")
+            self._chevron_color = color
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = 9.0
+
+        if self._selected:
+            fill_alpha = 20 + int(10 * self._hover)
+        else:
+            fill_alpha = int(18 * self._hover)
+
+        if fill_alpha > 0:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(255, 255, 255, fill_alpha))
+            painter.drawRoundedRect(rect, radius, radius)
+
+        border_alpha = 10 + int(14 * self._hover)
+        if self._selected:
+            border_alpha = 34
+        painter.setPen(QPen(QColor(255, 255, 255, border_alpha), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(rect, radius, radius)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.key)
+        super().mousePressEvent(event)
+
+
+def _make_chevron(parent: QWidget) -> QLabel:
+    label = QLabel("›", parent)
+    label.setObjectName("Chevron")
+    label.setAttribute(Qt.WA_TransparentForMouseEvents)
+    return label
+
+
+class NavCard(_NavItemBase):
+    """左侧导航卡片：标题 + 当前值 + 迷你曲线。"""
 
     def __init__(
         self,
@@ -124,23 +223,11 @@ class NavCard(QFrame):
         y_max: Optional[float] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
-        super().__init__(parent)
-        self.key = key
-        self.setObjectName("NavCard")
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(96)
-        self.setProperty("selected", False)
+        super().__init__(key, 96, parent)
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(0, 8, 12, 8)
-        root.setSpacing(0)
-
-        self._bar = QFrame()
-        self._bar.setObjectName("NavBar")
-        self._bar.setFixedWidth(3)
-        self._bar.setProperty("active", False)
-        root.addWidget(self._bar)
-        root.addSpacing(12)
+        root.setContentsMargins(14, 8, 12, 8)
+        root.setSpacing(6)
 
         body = QVBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -150,10 +237,12 @@ class NavCard(QFrame):
         head.setContentsMargins(0, 0, 0, 0)
         self._title = QLabel(title)
         self._title.setStyleSheet(f"color:{C.TEXT};font-size:13px;font-weight:500;")
+        self._title.setAttribute(Qt.WA_TransparentForMouseEvents)
         self._value = QLabel("--")
         self._value.setFont(mono_font(10))
         self._value.setStyleSheet(f"color:{C.TEXT_DIM};")
         self._value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._value.setAttribute(Qt.WA_TransparentForMouseEvents)
         head.addWidget(self._title)
         head.addStretch(1)
         head.addWidget(self._value)
@@ -163,72 +252,45 @@ class NavCard(QFrame):
         body.addWidget(self._spark, 1)
         root.addLayout(body, 1)
 
-    # ---------------------------------------------------------------- 状态
+        self._chevron = _make_chevron(self)
+        root.addWidget(self._chevron, 0, Qt.AlignVCenter)
+        self._update_chevron()
+
     def set_value(self, text: str) -> None:
         self._value.setText(text)
 
     def set_values(self, values: Sequence[Optional[float]]) -> None:
         self._spark.set_values(values)
 
-    def set_selected(self, selected: bool) -> None:
-        for widget, prop in ((self, "selected"), (self._bar, "active")):
-            widget.setProperty(prop, selected)
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit(self.key)
-        super().mousePressEvent(event)
-
-
-class CompactNavItem(QFrame):
+class CompactNavItem(_NavItemBase):
     """无缩略图的紧凑导航项，用于服务、用户等非性能页面。"""
 
-    clicked = Signal(str)
-
     def __init__(self, key: str, title: str, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self.key = key
-        self.setObjectName("NavCard")
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(46)
-        self.setProperty("selected", False)
+        super().__init__(key, 46, parent)
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 12, 0)
-        root.setSpacing(0)
-
-        self._bar = QFrame()
-        self._bar.setObjectName("NavBar")
-        self._bar.setFixedWidth(3)
-        self._bar.setProperty("active", False)
-        root.addWidget(self._bar)
-        root.addSpacing(12)
+        root.setContentsMargins(14, 0, 12, 0)
+        root.setSpacing(6)
 
         self._title = QLabel(title)
         self._title.setStyleSheet(f"color:{C.TEXT};font-size:13px;")
+        self._title.setAttribute(Qt.WA_TransparentForMouseEvents)
         self._value = QLabel("--")
         self._value.setFont(mono_font(9))
         self._value.setStyleSheet(f"color:{C.TEXT_DIM};")
+        self._value.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         root.addWidget(self._title)
         root.addStretch(1)
         root.addWidget(self._value)
 
+        self._chevron = _make_chevron(self)
+        root.addWidget(self._chevron, 0, Qt.AlignVCenter)
+        self._update_chevron()
+
     def set_value(self, text: str) -> None:
         self._value.setText(text)
-
-    def set_selected(self, selected: bool) -> None:
-        for widget, prop in ((self, "selected"), (self._bar, "active")):
-            widget.setProperty(prop, selected)
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit(self.key)
-        super().mousePressEvent(event)
 
 
 class Stat(QWidget):

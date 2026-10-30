@@ -6,7 +6,14 @@ import datetime
 from typing import Dict, List, Optional
 
 import platform
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPropertyAnimation,
+    QRect,
+    QTimer,
+    Qt,
+)
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -149,6 +156,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(6)
+        self._nav_container = container
 
         specs = (
             ("proc", "进程", C.CPU, None),
@@ -160,6 +168,7 @@ class MainWindow(QMainWindow):
         )
         for key, label, color, y_max in specs:
             card = NavCard(key, label, color, y_max=y_max)
+            card.setToolTip(f"查看{label}详情")
             card.clicked.connect(self._select)
             layout.addWidget(card)
             self._cards[key] = card
@@ -167,13 +176,56 @@ class MainWindow(QMainWindow):
         layout.addSpacing(6)
         for key, label in (("services", "服务"), ("users", "用户")):
             item = CompactNavItem(key, label)
+            item.setToolTip(f"查看{label}详情")
             item.clicked.connect(self._select)
             layout.addWidget(item)
             self._cards[key] = item
 
         layout.addStretch(1)
+
+        # 共享的选中指示条：切页时在卡片之间滑动，给用户空间上的连续性
+        self._nav_indicator = QFrame(container)
+        self._nav_indicator.setFixedWidth(3)
+        self._nav_indicator.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._nav_indicator.setStyleSheet(
+            f"background:{C.ACCENT};border-radius:1px;"
+        )
+        self._nav_indicator.hide()
+        self._nav_indicator_anim = QPropertyAnimation(
+            self._nav_indicator, b"geometry", self
+        )
+        self._nav_indicator_anim.setDuration(180)
+        self._nav_indicator_anim.setEasingCurve(QEasingCurve.OutCubic)
+
         scroll.setWidget(container)
         return scroll
+
+    def _move_indicator(self, key: str, animate: bool = True) -> None:
+        card = self._cards.get(key)
+        if card is None:
+            return
+        geo = card.geometry()
+        if geo.height() <= 0:
+            # 首次布局尚未完成，等事件循环空闲后再定位
+            QTimer.singleShot(0, lambda: self._move_indicator(key, animate=False))
+            return
+
+        target = QRect(4, geo.y() + 10, 3, max(20, geo.height() - 20))
+        self._nav_indicator.show()
+        self._nav_indicator.raise_()
+
+        if animate and self._nav_indicator.geometry().height() > 0:
+            self._nav_indicator_anim.stop()
+            self._nav_indicator_anim.setStartValue(self._nav_indicator.geometry())
+            self._nav_indicator_anim.setEndValue(target)
+            self._nav_indicator_anim.start()
+        else:
+            self._nav_indicator.setGeometry(target)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "_nav_indicator"):
+            self._move_indicator(self._current_key, animate=False)
 
     def _build_stack(self) -> QWidget:
         self._stack = QStackedWidget()
@@ -214,6 +266,7 @@ class MainWindow(QMainWindow):
         self._current_key = key
         for card_key, card in self._cards.items():
             card.set_selected(card_key == key)
+        self._move_indicator(key)
         self._stack.setCurrentWidget(self._pages[key])
 
         # 进程遍历在 Windows 上约 1 秒 CPU，只在需要看进程列表时保持高频

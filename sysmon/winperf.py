@@ -21,6 +21,13 @@ _ERROR_SUCCESS = 0
 
 _COUNTER_PATH = r"\PhysicalDisk(_Total)\% Disk Time"
 
+# 任务管理器「性能 → CPU」显示的利用率对应的是 % Processor Utility（频率加权），
+# 而不是 % Processor Time（纯时间占比）。二者在睿频/降频时会相差数倍：
+# 开发机实测同一时刻 Processor Time 为 1%，Processor Utility 为 16%，
+# 任务管理器显示 21%。psutil.cpu_percent() 用的是后者（Processor Time）。
+_CPU_TOTAL_PATH = r"\Processor Information(_Total)\% Processor Utility"
+_CPU_CORE_PATH = r"\Processor Information(0,{})\% Processor Utility"
+
 
 class _PdhFmtCounterValue(ctypes.Structure):
     class _Value(ctypes.Union):
@@ -112,3 +119,98 @@ class DiskActivity:
             except Exception:
                 pass
             self._available = False
+
+
+class CpuUsage:
+    """CPU 利用率，口径与任务管理器一致（% Processor Utility）。
+
+    不可用时 read() 返回 None，由调用方回退到 psutil.cpu_percent()。
+    """
+
+    def __init__(self, core_count: int) -> None:
+        self._pdh = None
+        self._query = wintypes.HANDLE()
+        self._total = wintypes.HANDLE()
+        self._cores = []          # [(索引, 计数器句柄)]
+        self._available = False
+        self._primed = False
+
+        if sys.platform != "win32":
+            return
+
+        try:
+            pdh = ctypes.WinDLL("pdh")
+            if pdh.PdhOpenQueryW(None, 0, ctypes.byref(self._query)) != _ERROR_SUCCESS:
+                return
+            if (
+                pdh.PdhAddEnglishCounterW(
+                    self._query, _CPU_TOTAL_PATH, 0, ctypes.byref(self._total)
+                )
+                != _ERROR_SUCCESS
+            ):
+                pdh.PdhCloseQuery(self._query)
+                return
+
+            for index in range(max(0, core_count)):
+                handle = wintypes.HANDLE()
+                if (
+                    pdh.PdhAddEnglishCounterW(
+                        self._query,
+                        _CPU_CORE_PATH.format(index),
+                        0,
+                        ctypes.byref(handle),
+                    )
+                    == _ERROR_SUCCESS
+                ):
+                    self._cores.append((index, handle))
+
+            self._pdh = pdh
+            self._available = True
+            self.rebase()
+        except Exception:
+            self._pdh = None
+            self._available = False
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def rebase(self) -> None:
+        if not self._available:
+            return
+        try:
+            self._pdh.PdhCollectQueryData(self._query)
+            self._primed = False
+        except Exception:
+            self._available = False
+
+    def _value(self, handle) -> Optional[float]:
+        value = _PdhFmtCounterValue()
+        rc = self._pdh.PdhGetFormattedCounterValue(
+            handle, _PDH_FMT_DOUBLE | _PDH_FMT_NOCAP100, None, ctypes.byref(value)
+        )
+        if rc != _ERROR_SUCCESS or value.status != _ERROR_SUCCESS:
+            return None
+        return max(0.0, float(value.doubleValue))
+
+    def read(self):
+        """返回 (总体利用率, 每核心利用率元组)；不可用时返回 None。"""
+        if not self._available:
+            return None
+        try:
+            if self._pdh.PdhCollectQueryData(self._query) != _ERROR_SUCCESS:
+                return None
+            total = self._value(self._total)
+            cores = []
+            for _, handle in self._cores:
+                v = self._value(handle)
+                cores.append(0.0 if v is None else min(100.0, v))
+
+            if not self._primed:
+                self._primed = True
+                return None
+            if total is None:
+                return None
+            return min(100.0, total), tuple(cores)
+        except Exception:
+            return None

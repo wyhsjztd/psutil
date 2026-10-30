@@ -113,7 +113,7 @@ class ChartCard(QFrame):
 
         self.plot = pg.PlotWidget(axisItems={"bottom": _SecondsAxis("bottom"), "left": left_axis})
         # 与卡片同色，避免 QGraphicsView 默认白底
-        self.plot.setBackground(C.SURFACE)
+        self.plot.setBackground(C.CARD_BASE)
         self.plot.setStyleSheet("background: transparent;")
         self.plot.setMouseEnabled(x=False, y=False)
         self.plot.setMenuEnabled(False)

@@ -13,6 +13,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyMod
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -21,6 +22,9 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QScrollArea,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableView,
     QTableWidget,
     QTableWidgetItem,
@@ -77,6 +81,7 @@ class ProcessTableModel(QAbstractTableModel):
 
     HEADERS = ("名称", "PID", "CPU", "内存")
     SORT_ROLE = Qt.UserRole + 1
+    HEAT_ROLE = Qt.UserRole + 2
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -128,6 +133,12 @@ class ProcessTableModel(QAbstractTableModel):
         if role == Qt.ToolTipRole and col == 0:
             return proc.name
 
+        if role == self.HEAT_ROLE:
+            # 空闲进程的百分比恒接近满分，画成红色热度条会误导成高负载
+            if "idle" in proc.name.lower():
+                return None
+            return proc.cpu if col == 2 else proc.mem_percent
+
         # 空闲进程在多核机器上恒接近 100%，不应被当成高负载告警
         if (
             role == Qt.ForegroundRole
@@ -147,6 +158,88 @@ class ProcessTableModel(QAbstractTableModel):
             align = Qt.AlignLeft if section == 0 else Qt.AlignRight
             return int(align | Qt.AlignVCenter)
         return None
+
+
+def _heat_color(frac: float) -> QColor:
+    """蓝 → 琥珀 → 红 的连续插值。"""
+    blue = QColor(C.ACCENT)
+    amber = QColor(C.WARN)
+    red = QColor(C.DANGER)
+    frac = max(0.0, min(1.0, frac))
+    if frac < 0.5:
+        a, b, k = blue, amber, frac / 0.5
+    else:
+        a, b, k = amber, red, (frac - 0.5) / 0.5
+    return QColor(
+        int(a.red() + (b.red() - a.red()) * k),
+        int(a.green() + (b.green() - a.green()) * k),
+        int(a.blue() + (b.blue() - a.blue()) * k),
+    )
+
+
+class HeatBarDelegate(QStyledItemDelegate):
+    """在数值单元格里先画一条按比例的长度条，再叠加数字。
+
+    这是进程表最接近真实系统工具的一处细节：扫一眼就能看出哪个进程吃资源，
+    不必逐个读数字。
+    """
+
+    def __init__(self, column: int, maximum: float = 100.0, parent=None) -> None:
+        super().__init__(parent)
+        self._column = column
+        self._maximum = maximum
+
+    def paint(self, painter, option, index) -> None:
+        if index.column() != self._column:
+            super().paint(painter, option, index)
+            return
+
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text = opt.text
+        opt.text = ""
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+
+        heat = index.data(ProcessTableModel.HEAT_ROLE)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        if heat is None:
+            # 不画热度条，数字照常显示
+            painter.setPen(QColor(C.TEXT))
+            painter.drawText(
+                option.rect.adjusted(0, 0, -10, 0),
+                Qt.AlignRight | Qt.AlignVCenter,
+                text,
+            )
+            painter.restore()
+            return
+
+        try:
+            frac = float(heat) / self._maximum
+        except (TypeError, ValueError):
+            frac = 0.0
+        frac = max(0.0, min(1.0, frac))
+
+        rect = option.rect.adjusted(4, 5, -4, -5)
+        bar_width = int(rect.width() * frac)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        if bar_width > 0:
+            color = _heat_color(frac)
+            color.setAlpha(64)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(
+                rect.left(), rect.top(), bar_width, rect.height(), 3, 3
+            )
+        painter.setPen(QColor(C.TEXT))
+        painter.drawText(
+            option.rect.adjusted(0, 0, -10, 0),
+            Qt.AlignRight | Qt.AlignVCenter,
+            text,
+        )
+        painter.restore()
 
 
 class ProcessFilterProxy(QSortFilterProxyModel):
@@ -270,7 +363,7 @@ def _make_table(columns: Sequence[str], stretch_col: int = 0) -> QTableWidget:
     table = QTableWidget(0, len(columns))
     table.setHorizontalHeaderLabels(list(columns))
     table.setShowGrid(False)
-    table.setAlternatingRowColors(False)
+    table.setAlternatingRowColors(True)
     table.setEditTriggers(QTableWidget.NoEditTriggers)
     table.setSelectionBehavior(QTableWidget.SelectRows)
     table.setFocusPolicy(Qt.NoFocus)
@@ -327,10 +420,13 @@ class ProcessPage(BasePage):
         self._table.sortByColumn(2, Qt.DescendingOrder)
         self._table.setShowGrid(False)
         self._table.setWordWrap(False)
+        self._table.setAlternatingRowColors(True)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setFocusPolicy(Qt.NoFocus)
+        self._table.setItemDelegateForColumn(2, HeatBarDelegate(2, 100.0, self._table))
+        self._table.setItemDelegateForColumn(3, HeatBarDelegate(3, 100.0, self._table))
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(32)
         self._table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
@@ -447,6 +543,7 @@ class CpuPage(BasePage):
         self._root.addLayout(stats)
 
         self._info_set = False
+        self._big_color: Optional[str] = None
 
     def update_data(self, snap, snaps, t0, nominal_dt, x_start, x_end) -> None:
         self._big.setText(f"{snap.cpu_percent:.0f}%")
@@ -457,7 +554,10 @@ class CpuPage(BasePage):
             color = C.WARN
         else:
             color = C.TEXT
-        self._big.setStyleSheet(f"font-size:44px;font-weight:600;color:{color};")
+        # 每帧重设样式会触发控件子树重新计算样式；只在颜色变化时写一次
+        if color != self._big_color:
+            self._big.setStyleSheet(f"font-size:44px;font-weight:600;color:{color};")
+            self._big_color = color
 
         if snap.cpu_freq > 0:
             self._freq.setText(f"{snap.cpu_freq / 1000:.2f} GHz")
@@ -485,6 +585,7 @@ class CpuPage(BasePage):
 class MemoryPage(BasePage):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__("内存", "物理内存使用情况", parent)
+        self._big_color: Optional[str] = None
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -528,7 +629,9 @@ class MemoryPage(BasePage):
     def update_data(self, snap, snaps, t0, nominal_dt, x_start, x_end) -> None:
         self._big.setText(f"{snap.mem_percent:.0f}%")
         color = C.WARN if snap.mem_percent >= 85 else C.TEXT
-        self._big.setStyleSheet(f"font-size:44px;font-weight:600;color:{color};")
+        if color != self._big_color:
+            self._big.setStyleSheet(f"font-size:44px;font-weight:600;color:{color};")
+            self._big_color = color
 
         used = format_bytes(snap.mem_used, suffix="")
         total = format_bytes(snap.mem_total, suffix="")

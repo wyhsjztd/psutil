@@ -1,45 +1,56 @@
 """配色与全局样式表。
 
-整体参照 Windows 11 任务管理器「性能」页的深色视觉：
-低饱和背景、卡片分层、单一强调色、细网格线。
+设计原则：
+- 三层表面（窗口 < 卡片 < 浮起/悬停），靠明度和一条更亮的顶边制造"有厚度"的观感，
+  不做真实模糊（Qt Widgets 没有 backdrop-filter，假玻璃在 1Hz 刷新下必然滞后）
+- 强调色收敛：主蓝承担绝大多数指标，紫色只给内存，绿色只给上行，
+  黄/红仅用于状态告警，避免六个色相同时争夺注意力
+- 表格去掉逐行分隔线，改用极淡的斑马纹，减少 300 行数据带来的视觉噪声
 """
 from __future__ import annotations
 
 
 class C:
-    """集中管理颜色，改主题只需动这里。"""
+    """集中管理颜色，改主题只需动这里。
 
-    BG = "#1e1e1e"
-    SURFACE = "#272727"
-    SURFACE_ALT = "#2d2d2d"
-    HOVER = "#323232"
-    SELECTED = "#3a3a3a"
-    BORDER = "#3a3a3a"
+    仅使用 #RRGGBB 形式，保证这些常量既能进 QSS，也能直接构造 QColor。
+    """
 
-    TEXT = "#f2f2f2"
-    TEXT_DIM = "#a0a0a0"
-    TEXT_FAINT = "#6e6e6e"
+    # 表面层级
+    BG = "#111317"
+    SURFACE = "#181B20"
+    SURFACE_RAISED = "#1F232A"
+    HOVER = "#232830"
+    SELECTED = "#2A3039"
+    BORDER = "#262B33"
+    BORDER_TOP = "#3A414D"
+    CARD_BASE = "#181B20"
 
-    ACCENT = "#4cc2ff"
-    ACCENT_DEEP = "#2b8fc0"
+    # 文本
+    TEXT = "#E6E8EB"
+    TEXT_DIM = "#9BA1A9"
+    TEXT_FAINT = "#6B7280"
 
-    CPU = "#4cc2ff"
-    MEM = "#b180f0"
-    DISK = "#f0a35e"
-    NET_DOWN = "#4cc2ff"
-    NET_UP = "#7ee0a3"
-    IO_READ = "#4cc2ff"
-    IO_WRITE = "#f0a35e"
+    # 强调色
+    ACCENT = "#4C9AFF"
+    ACCENT_DEEP = "#2F6FD0"
+    ACCENT_SOFT = "#2B4C7E"
 
-    WARN = "#f2b23e"
-    DANGER = "#ef5b5b"
+    # 指标色：主蓝为主，紫色只给内存，绿色只给上行
+    CPU = "#4C9AFF"
+    MEM = "#A371F7"
+    DISK = "#4C9AFF"
+    NET_DOWN = "#4C9AFF"
+    NET_UP = "#3FB950"
+    IO_READ = "#4C9AFF"
+    IO_WRITE = "#D29922"
+
+    # 状态色，仅用于告警
+    WARN = "#D29922"
+    DANGER = "#F85149"
 
 
 QSS = f"""
-* {{
-    font-family: "Microsoft YaHei UI", "Segoe UI", "PingFang SC", sans-serif;
-}}
-
 QMainWindow {{
     background-color: {C.BG};
 }}
@@ -78,26 +89,18 @@ QLabel[role="statValue"] {{
     color: {C.TEXT};
 }}
 
-QLabel[role="bigValue"] {{
-    font-size: 44px;
-    font-weight: 600;
-    color: {C.TEXT};
+QLabel#Chevron {{
+    color: {C.TEXT_FAINT};
+    font-size: 15px;
 }}
 
-QLabel[role="hugeValue"] {{
-    font-size: 34px;
-    font-weight: 600;
-    color: {C.TEXT};
-}}
-
-QFrame#Card {{
-    background-color: {C.SURFACE};
-    border-radius: 8px;
-}}
-
-QFrame#ChartCard {{
-    background-color: {C.SURFACE};
-    border-radius: 8px;
+/* 卡片：上亮下暗的渐变 + 更亮的顶边，模拟受光面 */
+QFrame#Card, QFrame#ChartCard {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #1C2026, stop:1 #16191E);
+    border: 1px solid {C.BORDER};
+    border-top: 1px solid {C.BORDER_TOP};
+    border-radius: 10px;
 }}
 
 QFrame#TopBar {{
@@ -109,32 +112,10 @@ QFrame#NavPanel {{
     background-color: {C.BG};
 }}
 
-QFrame#NavCard {{
-    background-color: transparent;
-    border-radius: 8px;
-}}
-
-QFrame#NavCard:hover {{
-    background-color: {C.HOVER};
-}}
-
-QFrame#NavCard[selected="true"] {{
-    background-color: {C.SELECTED};
-}}
-
-QFrame#NavBar {{
-    background-color: transparent;
-    border-radius: 2px;
-}}
-
-QFrame#NavBar[active="true"] {{
-    background-color: {C.ACCENT};
-}}
-
 QPushButton {{
-    background-color: {C.SURFACE_ALT};
+    background-color: {C.SURFACE_RAISED};
     color: {C.TEXT};
-    border: none;
+    border: 1px solid {C.BORDER};
     border-radius: 6px;
     padding: 6px 14px;
     font-size: 12px;
@@ -142,6 +123,7 @@ QPushButton {{
 
 QPushButton:hover {{
     background-color: {C.HOVER};
+    border-top: 1px solid {C.BORDER_TOP};
 }}
 
 QPushButton:pressed {{
@@ -154,9 +136,9 @@ QPushButton:checked {{
 }}
 
 QComboBox {{
-    background-color: {C.SURFACE_ALT};
+    background-color: {C.SURFACE_RAISED};
     color: {C.TEXT};
-    border: none;
+    border: 1px solid {C.BORDER};
     border-radius: 6px;
     padding: 5px 10px;
     font-size: 12px;
@@ -168,19 +150,19 @@ QComboBox:hover {{
 }}
 
 QComboBox QAbstractItemView {{
-    background-color: {C.SURFACE_ALT};
+    background-color: {C.SURFACE_RAISED};
     color: {C.TEXT};
     border: 1px solid {C.BORDER};
     selection-background-color: {C.SELECTED};
     outline: none;
 }}
 
+/* 表格：无逐行分隔线，用极淡斑马纹区分行 */
 QTableWidget, QTableView {{
-    background-color: {C.SURFACE};
-    alternate-background-color: {C.SURFACE};
+    background-color: transparent;
+    alternate-background-color: #1B1F25;
     color: {C.TEXT};
     border: none;
-    border-radius: 8px;
     gridline-color: transparent;
     font-size: 12px;
     selection-background-color: {C.SELECTED};
@@ -188,44 +170,16 @@ QTableWidget, QTableView {{
 }}
 
 QTableWidget::item, QTableView::item {{
-    padding: 6px 8px;
-    border-bottom: 1px solid {C.SURFACE_ALT};
+    padding: 4px 8px;
+    border: none;
 }}
 
-QLineEdit {{
-    background-color: {C.SURFACE_ALT};
-    color: {C.TEXT};
-    border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 6px 10px;
-    font-size: 12px;
-    selection-background-color: {C.ACCENT_DEEP};
-}}
-
-QLineEdit:focus {{
-    border: 1px solid {C.ACCENT_DEEP};
-    background-color: {C.HOVER};
-}}
-
-QMenu {{
-    background-color: {C.SURFACE_ALT};
-    color: {C.TEXT};
-    border: 1px solid {C.BORDER};
-    border-radius: 6px;
-    padding: 4px;
-}}
-
-QMenu::item {{
-    padding: 6px 20px;
-    border-radius: 4px;
-}}
-
-QMenu::item:selected {{
-    background-color: {C.SELECTED};
+QHeaderView {{
+    background-color: transparent;
 }}
 
 QHeaderView::section {{
-    background-color: {C.SURFACE};
+    background-color: #1B1F25;
     color: {C.TEXT_DIM};
     border: none;
     border-bottom: 1px solid {C.BORDER};
@@ -234,20 +188,25 @@ QHeaderView::section {{
     font-weight: 500;
 }}
 
+QTableCornerButton::section {{
+    background-color: #1B1F25;
+    border: none;
+}}
+
 QScrollBar:vertical {{
     background: transparent;
     width: 10px;
-    margin: 0;
+    margin: 2px 0;
 }}
 
 QScrollBar::handle:vertical {{
-    background: #4a4a4a;
-    border-radius: 5px;
+    background: #343A44;
+    border-radius: 4px;
     min-height: 30px;
 }}
 
 QScrollBar::handle:vertical:hover {{
-    background: #5c5c5c;
+    background: #454D59;
 }}
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
@@ -267,17 +226,18 @@ QStatusBar {{
     background-color: {C.BG};
     color: {C.TEXT_FAINT};
     font-size: 11px;
+    border-top: 1px solid {C.BORDER};
 }}
 
 QToolTip {{
-    background-color: {C.SURFACE_ALT};
+    background-color: {C.SURFACE_RAISED};
     color: {C.TEXT};
     border: 1px solid {C.BORDER};
     padding: 4px 8px;
 }}
 
 QProgressBar {{
-    background-color: #3a3a3a;
+    background-color: #2A2F37;
     border: none;
     border-radius: 3px;
 }}
@@ -285,5 +245,37 @@ QProgressBar {{
 QProgressBar::chunk {{
     background-color: {C.ACCENT};
     border-radius: 3px;
+}}
+
+QLineEdit {{
+    background-color: {C.SURFACE_RAISED};
+    color: {C.TEXT};
+    border: 1px solid {C.BORDER};
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    selection-background-color: {C.ACCENT_DEEP};
+}}
+
+QLineEdit:focus {{
+    border: 1px solid {C.ACCENT_DEEP};
+    background-color: {C.HOVER};
+}}
+
+QMenu {{
+    background-color: {C.SURFACE_RAISED};
+    color: {C.TEXT};
+    border: 1px solid {C.BORDER};
+    border-radius: 6px;
+    padding: 4px;
+}}
+
+QMenu::item {{
+    padding: 6px 20px;
+    border-radius: 4px;
+}}
+
+QMenu::item:selected {{
+    background-color: {C.SELECTED};
 }}
 """

@@ -6,7 +6,7 @@ import datetime
 from typing import Dict, List, Optional
 
 import platform
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -216,9 +216,9 @@ class MainWindow(QMainWindow):
             card.set_selected(card_key == key)
         self._stack.setCurrentWidget(self._pages[key])
 
-        # 进程遍历在 Windows 上约 1 秒，只在需要看进程列表时保持高频
+        # 进程遍历在 Windows 上约 1 秒 CPU，只在需要看进程列表时保持高频
         if hasattr(self, "_process_worker"):
-            self._process_worker.set_interval(3.0 if key == "proc" else 10.0)
+            self._process_worker.set_interval(3.0 if key == "proc" else 30.0)
 
         if key == "services" and self._services_cache is not None:
             self._pages["services"].set_services(self._services_cache)
@@ -403,6 +403,22 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"已导出 {len(snapshots)} 条记录 → {path}", 6000)
 
     # ------------------------------------------------------------------ 收尾
+    def changeEvent(self, event) -> None:  # noqa: N802
+        """窗口最小化时暂停采集。
+
+        系统监视器常被最小化挂在托盘里，此时继续每秒采样只是白白占用 CPU。
+        """
+        if event.type() == QEvent.WindowStateChange and hasattr(self, "_worker"):
+            if self.isMinimized():
+                self._worker.pause()
+                self._process_worker.set_interval(300.0)
+            else:
+                self._worker.resume()
+                self._process_worker.set_interval(
+                    3.0 if self._current_key == "proc" else 30.0
+                )
+        super().changeEvent(event)
+
     def closeEvent(self, event) -> None:  # noqa: N802
         """停止全部采集线程。
 

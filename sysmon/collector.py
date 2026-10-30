@@ -17,6 +17,7 @@ import psutil
 
 from .engine import RateTracker
 from .models import PartitionInfo, ProcessInfo, Snapshot, UserInfo
+from .winperf import DiskActivity
 
 PARTITION_CACHE_SECONDS = 30.0
 CONNECTIONS_EVERY_N_TICKS = 5
@@ -33,6 +34,14 @@ class Collector:
         self._net_down_tracker = RateTracker(interval)
         self._disk_read_tracker = RateTracker(interval)
         self._disk_write_tracker = RateTracker(interval)
+
+        # 磁盘活动时间：优先用 PDH 性能计数器（与任务管理器同源），
+        # 不可用时退回 read_time/write_time 差值法
+        self._disk_activity = DiskActivity()
+        self._busy_prev: Optional[Tuple[float, float]] = None
+        # CPU 基线刚重置时，避免用极短间隔再算一次得出垃圾值
+        self._cpu_last_mono: Optional[float] = None
+        self._cpu_last_value: Tuple[float, Tuple[float, ...], float] = (0.0, (), 0.0)
 
         self._part_cache: Optional[List[psutil._common.sdiskpart]] = None
         self._part_cache_time = float("-inf")
@@ -61,10 +70,15 @@ class Collector:
         """
         for tracker in self._trackers():
             tracker.reset()
+        self._busy_prev = None
+        self._disk_activity.rebase()
 
         try:
             psutil.cpu_percent(interval=None)
             psutil.cpu_percent(interval=None, percpu=True)
+            # 记录重置时刻：紧接着的那一帧间隔太短，不能直接再取一次，
+            # 否则得到的是微秒级窗口上的随机值
+            self._cpu_last_mono = time.perf_counter()
         except Exception:
             pass
 
@@ -104,7 +118,7 @@ class Collector:
         errors: List[str] = []
         self._tick += 1
 
-        cpu_percent, cpu_per_core, cpu_freq = self._sample_cpu(errors)
+        cpu_percent, cpu_per_core, cpu_freq = self._sample_cpu(mono, errors)
         (
             mem_percent,
             mem_used,
@@ -116,7 +130,7 @@ class Collector:
         ) = self._sample_memory(errors)
         partitions = self._sample_partitions(mono, errors)
         net_up, net_down, net_sent, net_recv = self._sample_network(mono)
-        disk_r, disk_w, disk_rt, disk_wt = self._sample_disk_io(mono)
+        disk_r, disk_w, disk_rt, disk_wt, disk_busy = self._sample_disk_io(mono)
         proc_cache, proc_count = self._read_processes()
         self._maybe_sample_connections(errors)
         self._maybe_sample_users(errors)
@@ -147,6 +161,7 @@ class Collector:
             disk_write_rate=disk_w,
             disk_read_total=disk_rt,
             disk_write_total=disk_wt,
+            disk_busy_percent=disk_busy,
             proc_count=proc_count,
             processes=proc_cache,
             users=self._users_cache,
@@ -155,7 +170,12 @@ class Collector:
         )
 
     # ------------------------------------------------------------------ 各指标
-    def _sample_cpu(self, errors: List[str]):
+    def _sample_cpu(self, mono: float, errors: List[str]):
+        # 基线刚重置（暂停恢复、改采样间隔）时，与上一次 cpu_percent 调用的
+        # 间隔只有微秒级，此时取数只会得到随机值。这一帧沿用上一帧的读数。
+        if self._cpu_last_mono is not None and mono - self._cpu_last_mono < 0.2:
+            return self._cpu_last_value
+
         try:
             percent = psutil.cpu_percent(interval=None)
             per_core = tuple(psutil.cpu_percent(interval=None, percpu=True))
@@ -170,6 +190,9 @@ class Collector:
                 freq = float(f.current)
         except Exception:
             pass
+
+        self._cpu_last_mono = mono
+        self._cpu_last_value = (percent, per_core, freq)
         return percent, per_core, freq
 
     @staticmethod
@@ -258,16 +281,34 @@ class Collector:
         try:
             per_disk = psutil.disk_io_counters(perdisk=True)
         except Exception:
-            return None, None, 0, 0
+            return None, None, 0, 0, None
         if not per_disk:
-            return None, None, 0, 0
+            return None, None, 0, 0, None
 
         read_total = sum(d.read_bytes for d in per_disk.values())
         write_total = sum(d.write_bytes for d in per_disk.values())
 
         read_rate = self._disk_read_tracker.update(read_total, mono)
         write_rate = self._disk_write_tracker.update(write_total, mono)
-        return read_rate, write_rate, read_total, write_total
+
+        busy = self._disk_activity.read()
+        if busy is None:
+            # 回退方案：read_time / write_time 为累计毫秒数（部分机器恒为 0）
+            busy_ms = float(
+                sum(getattr(d, "read_time", 0) + getattr(d, "write_time", 0)
+                    for d in per_disk.values())
+            )
+            prev = self._busy_prev
+            if prev is not None:
+                dt = mono - prev[1]
+                tolerance = max(self.interval * 2.0, 0.5)
+                if dt > 0 and abs(dt - self.interval) <= tolerance:
+                    delta_ms = busy_ms - prev[0]
+                    if delta_ms >= 0:
+                        busy = max(0.0, min(100.0, delta_ms / (dt * 1000.0) * 100.0))
+            self._busy_prev = (busy_ms, mono)
+
+        return read_rate, write_rate, read_total, write_total, busy
 
     def refresh_processes(self) -> None:
         """由独立的进程线程周期调用。

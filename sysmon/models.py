@@ -93,6 +93,9 @@ class Snapshot:
     disk_write_rate: Optional[float]
     disk_read_total: int
     disk_write_total: int
+    # 磁盘活动时间占比（%），语义对应任务管理器「性能 → 磁盘」的百分比；
+    # 与分区容量使用率完全是两回事
+    disk_busy_percent: Optional[float]
 
     # 进程（由独立线程更新，采样时只读缓存）
     proc_count: int

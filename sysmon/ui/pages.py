@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..engine import format_bytes
+from ..engine import format_bytes, format_percent
 from .charts import ChartCard, build_series
 from .theme import C
 from .widgets import PartitionRow, Stat, mono_font
@@ -551,7 +551,7 @@ class MemoryPage(BasePage):
 # ---------------------------------------------------------------- 磁盘
 class DiskPage(BasePage):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__("磁盘", "各分区空间使用情况", parent)
+        super().__init__("磁盘", "各分区容量使用率 · 下方为磁盘活动时间与吞吐", parent)
 
         card = QFrame()
         card.setObjectName("ChartCard")
@@ -560,7 +560,7 @@ class DiskPage(BasePage):
         card_layout.setSpacing(4)
 
         header = QHBoxLayout()
-        title = QLabel("分区")
+        title = QLabel("分区容量使用率（与任务管理器的「磁盘占用」含义不同）")
         title.setStyleSheet(f"color:{C.TEXT_DIM};font-size:12px;")
         header.addWidget(title)
         header.addStretch(1)
@@ -587,10 +587,11 @@ class DiskPage(BasePage):
 
         stats = QHBoxLayout()
         stats.setSpacing(36)
+        self._stat_busy = Stat("活动时间")
         self._stat_read = Stat("当前读取")
         self._stat_write = Stat("当前写入")
         self._stat_count = Stat("分区数量")
-        for s in (self._stat_read, self._stat_write, self._stat_count):
+        for s in (self._stat_busy, self._stat_read, self._stat_write, self._stat_count):
             stats.addWidget(s)
         stats.addStretch(1)
         self._root.addLayout(stats)
@@ -624,6 +625,7 @@ class DiskPage(BasePage):
                 format_bytes(part.total, suffix=""),
             )
 
+        self._stat_busy.set_value(format_percent(snap.disk_busy_percent))
         self._stat_read.set_value(format_bytes(snap.disk_read_rate))
         self._stat_write.set_value(format_bytes(snap.disk_write_rate))
         self._stat_count.set_value(str(len(parts)))

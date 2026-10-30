@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..collector import Collector
-from ..engine import HysteresisAlarm, History, format_bytes
+from ..engine import HysteresisAlarm, History, format_bytes, format_percent
 from ..services import ServiceWorker
 from ..worker import ProcessWorker, SampleWorker
 from .pages import (
@@ -305,13 +305,10 @@ class MainWindow(QMainWindow):
         cards["mem"].set_value(f"{snap.mem_percent:.0f}%")
         cards["mem"].set_values([s.mem_percent for s in snaps])
 
-        # 数值与迷你曲线必须同源：这里都取「最满分区」的使用率，
-        # 而不是数值用占用率、曲线用吞吐（那样两张卡会显示同一条曲线）。
-        max_part = max((p.percent for p in snap.partitions), default=0.0)
-        cards["disk"].set_value(f"{max_part:.0f}%")
-        cards["disk"].set_values(
-            [max((p.percent for p in s.partitions), default=0.0) for s in snaps]
-        )
+        # 磁盘卡片对应任务管理器的「磁盘」：显示活动时间占比，而不是容量使用率。
+        # 容量使用率是另一个指标，放在磁盘页的分区列表里。
+        cards["disk"].set_value(format_percent(snap.disk_busy_percent))
+        cards["disk"].set_values([s.disk_busy_percent for s in snaps])
 
         cards["net"].set_value(format_bytes(snap.net_down_rate))
         cards["net"].set_values(
@@ -369,7 +366,8 @@ class MainWindow(QMainWindow):
             "时间(ISO8601)",
             "CPU(%)",
             "内存(%)",
-            "磁盘最大使用率(%)",
+            "磁盘活动(%)",
+            "分区最大容量使用率(%)",
             "网络下行(B/s)",
             "网络上行(B/s)",
             "磁盘读(B/s)",
@@ -388,6 +386,7 @@ class MainWindow(QMainWindow):
                             datetime.datetime.fromtimestamp(s.wall).isoformat(timespec="seconds"),
                             f"{s.cpu_percent:.2f}",
                             f"{s.mem_percent:.2f}",
+                            "" if s.disk_busy_percent is None else f"{s.disk_busy_percent:.1f}",
                             f"{max_part:.2f}",
                             "" if s.net_down_rate is None else f"{s.net_down_rate:.0f}",
                             "" if s.net_up_rate is None else f"{s.net_up_rate:.0f}",

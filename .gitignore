@@ -24,3 +24,6 @@ Thumbs.db
 # PyInstaller
 *.manifest
 _preview_*.png
+
+# 构建用虚拟环境
+.venv-build/

@@ -1,0 +1,9 @@
+# 构建 exe 专用的最小依赖集。
+# 使用 PySide6-Essentials 而不是 PySide6，可避免打入 WebEngine/QtQuick 等
+# 本项目用不到的模块；同时要求在一个干净的虚拟环境中构建，
+# 否则 PyInstaller 可能把开发机上其他项目的巨型依赖一起收进来。
+PySide6-Essentials>=6.8
+pyqtgraph>=0.13
+psutil>=5.9
+numpy>=1.26
+pyinstaller>=6.0

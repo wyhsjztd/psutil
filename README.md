@@ -59,10 +59,17 @@ python main.py
 
 双击运行 `build_exe.bat`，产物为 `dist\SysMon.exe`（单文件、无控制台窗口，可直接双击启动）。
 
-手动执行等价命令：
+脚本会自动创建 `.venv-build` 干净虚拟环境再打包。**这一步不能省**：
+PyInstaller 会沿依赖链扫描，若直接用开发机上的全局环境，
+很容易把其他项目的重型依赖（实测把 torch、cv2、scipy 等约 1 GB 打了进去，
+产物体积从 90 MB 膨胀到 444 MB）一并收进 exe。
+
+手动执行等价命令（在干净虚拟环境中）：
 
 ```bash
-python -m PyInstaller --noconfirm --clean --onefile --windowed ^
+python -m venv .venv-build
+.venv-build\Scripts\pip install -r requirements-build.txt
+.venv-build\Scripts\python -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --name SysMon --icon assets\icon.ico ^
   --add-data "assets\icon.png;assets" main.py
 ```

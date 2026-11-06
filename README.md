@@ -3,10 +3,10 @@
 基于 **Python + psutil + PySide6** 的 Windows 系统性能监控桌面程序，界面参照 Windows 11 任务管理器「性能」页的布局与交互。
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![PySide6](https://img.shields.io/badge/PySide6-6.8-green)
+![PySide6](https://img.shields.io/badge/PySide6-6.12-green)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
-> **代码库地址**：<!-- 提交后替换为实际仓库链接 -->
+> **代码库地址**：<https://github.com/wyhsjztd/psutil>
 
 ![CPU 页面](docs/images/cpu.png)
 
@@ -95,6 +95,7 @@ psutil/
 │   ├── models.py            # 冻结数据模型
 │   ├── engine.py            # 速率计算 / 历史窗口 / 告警（纯逻辑）
 │   ├── collector.py         # psutil 采集封装
+│   ├── winperf.py           # PDH 性能计数器（CPU 利用率、磁盘活动时间）
 │   ├── worker.py            # 采样线程
 │   ├── services.py          # 服务采集线程（WMI 较慢，独立运行）
 │   └── ui/
@@ -105,6 +106,7 @@ psutil/
 │       └── main_window.py   # 主窗口
 ├── tests/test_engine.py
 ├── docs/
+│   ├── 系统文档.md
 │   ├── 设计文档.md
 │   └── 用户手册.md
 └── requirements.txt
@@ -112,6 +114,7 @@ psutil/
 
 ## 文档
 
+- [系统文档](docs/系统文档.md)：AI 工具、技术栈、已实现功能、用户操作手册（提交用总文档）
 - [设计文档](docs/设计文档.md)：技术选型、架构设计、指标定义、关键算法
 - [用户手册](docs/用户手册.md)：安装、使用、常见问题
 
@@ -122,6 +125,12 @@ psutil/
 - 服务页依赖 WMI，刷新间隔为 30 秒
 - 进程 CPU 占用为采样区间内的平均值（3 秒），与任务管理器的瞬时值存在细微差异
 - 不持久化历史数据，关闭程序后清空
+
+## 开发说明
+
+本项目借助 AI 编程助手完成开发：**Claude Code**（助手框架）+ **DeepSeek**（底层大模型），
+用于需求拆解、代码编写与调试、文档撰写。所有关键读数均已与 Windows 任务管理器、
+性能监视器逐项对照验证。详见 [系统文档 · 一、所用的 AI 工具](docs/系统文档.md)。
 
 ## License
 
